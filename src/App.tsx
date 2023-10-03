@@ -4,25 +4,25 @@ import { Drawer } from "./canvas/drawer";
 import { ImagePolygon } from "./canvas/imagePolygon";
 import { Rect } from "./canvas/base";
 import { DragAndZoomRect } from "./canvas/dragAndZoom";
+import { DRect } from "./canvas/rect";
 
 function App() {
     const ref = useRef<HTMLCanvasElement>(null);
     const [drawer, setDrawer] = useState<Drawer | null>(null);
 
     useEffect(() => {
-      if (!ref.current) return;
+        if (!ref.current) return;
 
-      const drawer = new Drawer(ref.current, {
-        width: 1200,
-        height: 800,
-      });
+        const drawer = new Drawer(ref.current, {
+            width: 1200,
+            height: 800,
+        });
 
-      setDrawer(drawer);
+        setDrawer(drawer);
 
-      return () => {
-        drawer.destroy();
-      }
-
+        return () => {
+            drawer.destroy();
+        };
     }, [ref]);
 
     useEffect(() => {
@@ -48,14 +48,28 @@ function App() {
             ],
         });
 
-        // lx 100 ly: 50 
-        const rct = new Rect({
+        // lx 100 ly: 50
+        const rct = new DRect({
             x: 600,
             y: 400,
             width: 1000,
             height: 700,
-            color: "red",
+            dragable: false,
+            scalable: false,
+            color: "white",
+        });
+
+        const rect = new DRect({
+            x: 100,
+            y: 100,
+            width: 200,
+            height: 200,
+            color: "green",
             type: "fill",
+            dragable: true,
+            scalable: true,
+            tags: ["left"],
+            zIndex: 8,
         });
 
         const drect = new DragAndZoomRect({
@@ -67,15 +81,16 @@ function App() {
             type: "fill",
             dragable: true,
             scalable: true,
-            tags: ['left'],
-            zIndex: 8
-        })
+            tags: ["left"],
+            zIndex: 8,
+        });
 
         // drawer.addPolygon(rect);
         drawer.addPolygon(rct);
         drawer.addPolygon(drect);
 
         rct.addChild(image);
+        rct.addChild(rect);
 
         drawer.draw();
 

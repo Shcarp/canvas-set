@@ -26,8 +26,6 @@ const DEFAULT_SCALE_TAB_WIDTH = 19;
 export interface DragAndZoomRectOptions extends RectBaseOptions {
     minWidth?: number;
     minHeight?: number;
-    scalable?: boolean;
-    dragable?: boolean;
     tags?: ScaleTabPositonType | ScaleTabPositon[] | ScaleTabPositonType[];
 }
 
@@ -35,12 +33,7 @@ const cornerPosition = ["leftTop", "rightTop", "leftBottom", "rightBottom"];
 
 const normalPosition = ["top", "bottom", "left", "right"];
 
-export class DragAndZoomRect<T extends DragAndZoomRectOptions>
-    extends Rect<T>
-    implements Dragable, Scalable
-{
-    private _status: PolygonStatus = PolygonStatus.PENDING;
-    protected _prevPoint: Point | null = null;
+export class DragAndZoomRect<T extends DragAndZoomRectOptions> extends Rect<T> {
     private _currentPoint: number | null = null;
     private _points: RectPoint | null = null;
 
@@ -54,10 +47,6 @@ export class DragAndZoomRect<T extends DragAndZoomRectOptions>
     constructor(options: DragAndZoomRectOptions) {
         super(options);
         this.tags = options.tags ?? [];
-    }
-
-    get status() {
-        return this._status;
     }
 
     get scalable() {
@@ -84,39 +73,7 @@ export class DragAndZoomRect<T extends DragAndZoomRectOptions>
         if (!this._points) {
             throw new Error("should init first!");
         }
-
         return this._points;
-    }
-
-    dragStart(point: Point): void {
-        this._status = PolygonStatus.DRAGING;
-        this._prevPoint = point;
-    }
-    scaleStart(point: Point): void {
-        this._status = PolygonStatus.SCALING;
-        this._prevPoint = point;
-    }
-    drag(point: Point): void {
-        this.update(point);
-        this.drawer.draw();
-    }
-    scale(point: Point): void {
-        this.update(point);
-        this.drawer.draw();
-    }
-    dragEnd(point: Point): void {
-        this._status = PolygonStatus.PENDING;
-        this.destroy();
-        this.update(point);
-        this.doDraw();
-        this._prevPoint = null;
-    }
-    scaleEnd(point: Point): void {
-        this._status = PolygonStatus.PENDING;
-        this.destroy();
-        this.update(point);
-        this.doDraw();
-        this._prevPoint = null;
     }
 
     isPointInPath(point: Point): boolean {
@@ -138,22 +95,7 @@ export class DragAndZoomRect<T extends DragAndZoomRectOptions>
         return false;
     }
 
-    private insertToZIndex<T extends BaseOptions>(polygon: Polygon<T>) {
-        let index = this.children.findIndex(
-            (item) => item.zIndex <= polygon.zIndex
-        );
-        if (index === -1) {
-            this.children.push(polygon);
-        } else {
-            this.children.splice(index, 0, polygon);
-        }
-    }
-
     protected doInit(): void {
-        this.on("movedown", this.onMoveDown.bind(this));
-        this.on("moveup", this.onMoveUp.bind(this));
-        this.on("move", this.onMove.bind(this));
-
         this._points = this.getPoints() as RectPoint;
         this._scaleTabPoints = this.getCornerPoints();
     }
@@ -161,10 +103,14 @@ export class DragAndZoomRect<T extends DragAndZoomRectOptions>
     protected doDraw(): void {
         // 画自身
         DrawHelper.drawPoints(this.ctx, this.points);
+    }
+
+    protected drawScale() {
         // 画缩放点
-        this._scaleTabPoints.forEach((points) => {
-            DrawHelper.drawPoints(this.ctx, points);
-        });
+        this.scalable &&
+            this._scaleTabPoints.forEach((points) => {
+                DrawHelper.drawPoints(this.ctx, points);
+            });
     }
 
     protected update(point: Point): void {
@@ -175,24 +121,70 @@ export class DragAndZoomRect<T extends DragAndZoomRectOptions>
             case PolygonStatus.SCALING:
                 this.doUpdateScale(point);
                 break;
+            case PolygonStatus.PENDING:
+                break;
         }
     }
 
     private doUpdateDrag(point: Point) {
-        const prevPoint = this._prevPoint as Point;
-        const x = this.x + (point.x - prevPoint.x);
-        const y = this.y + (point.y - prevPoint.y);
+        const x = this.x + (point.x - this.prevPoint.x);
+        const y = this.y + (point.y - this.prevPoint.y);
         this.x = x;
         this.y = y;
+
         this._points = this.getPoints();
+        // 判断是否超出边界
+
+        if (this.parent && this.parent instanceof Rect) {
+            const { width, height } = this.parent;
+            const { x: leftX, y: leftY } = this.points[0];
+            if (leftX < this.parent.leftX) {
+                this.x = this.parent.leftX + this.width / 2;
+            }
+
+            if (leftY < this.parent.leftY) {
+                this.y = this.parent.leftY + this.height / 2;
+            }
+
+            const { x: rightX, y: rightY } = this.points[2];
+
+            if (rightX > this.parent.leftX + width) {
+                this.x = width + this.parent.leftX - this.width / 2;
+            }
+
+            if (rightY > this.parent.leftY + height) {
+                this.y = height + this.parent.leftY - this.height / 2;
+            }
+        } else {
+            const { width, height } = this.drawer;
+            const { x: leftX, y: leftY } = this.points[0];
+            if (leftX < 0) {
+                this.x = this.width / 2;
+            }
+
+            if (leftY < 0) {
+                this.y = this.height / 2;
+            }
+
+            const { x: rightX, y: rightY } = this.points[2];
+
+            if (rightX > width) {
+                this.x = width;
+            }
+
+            if (rightY > height) {
+                this.y = height;
+            }
+        }
+
         this._scaleTabPoints = this.getCornerPoints();
-        this._prevPoint = point;
+
+        this.prevPoint = point;
     }
 
     private doUpdateScale(point: Point) {
-        const prevPoint = this._prevPoint as Point;
-        const xDistance = point.x - prevPoint.x;
-        const yDistance = point.y - prevPoint.y;
+        const xDistance = point.x - this.prevPoint.x;
+        const yDistance = point.y - this.prevPoint.y;
         const newGeometry = { ...this.options };
 
         const cacle = {
@@ -278,7 +270,7 @@ export class DragAndZoomRect<T extends DragAndZoomRectOptions>
         this.options = newGeometry;
         this._points = this.getPoints();
         this._scaleTabPoints = this.getCornerPoints();
-        this._prevPoint = point;
+        this.prevPoint = point;
     }
 
     private getPoints(): RectPoint {
@@ -410,81 +402,6 @@ export class DragAndZoomRect<T extends DragAndZoomRectOptions>
         const centerY = this.leftY + y;
         // 上下左右
         return getPointMatrix(centerX, centerY, width, height) as RectPoint;
-    }
-
-    private onMoveDown(point: Point) {
-        // 判断是否点击在children 中
-        this.children.forEach((polygon: Polygon<any>) => {
-            if (
-                polygon instanceof DragAndZoomRect &&
-                polygon.scalable &&
-                polygon.isPointInPath(point)
-            ) {
-                polygon.scaleStart(point);
-                this.activeTarget = polygon;
-                return
-            }
-
-            if (polygon.dragable && polygon.isInPath(point)) {
-                polygon.emit("movedown", point);
-                this.activeTarget = polygon;
-                this._status = PolygonStatus.ACTIVE;
-                return;
-            }
-        });
-        // 将 activeTarget 移到children zIndex 最前面
-        if (this._status === PolygonStatus.ACTIVE && this.activeTarget) {
-            const index = this.children.indexOf(this.activeTarget);
-            if (index !== -1) {
-                this.children.splice(index, 1);
-            }
-            this.insertToZIndex(this.activeTarget);
-            return;
-        }
-
-        this.dragStart(point);
-    }
-
-    private onMoveUp(point: Point) {
-        switch (this._status) {
-            case PolygonStatus.DRAGING:
-                this.dragEnd(point);
-                break;
-            case PolygonStatus.SCALING:
-                this.scaleEnd(point);
-                break;
-            case PolygonStatus.ACTIVE:
-                if (this.activeTarget) {
-                    this.activeTarget.emit("moveup", point);
-                }
-                break;
-            default:
-                break;
-        }
-
-        this.activeTarget = null;
-    }
-
-    private onMove(point: Point) {
-        switch (this._status) {
-            case PolygonStatus.DRAGING:
-                makeRequestAnimationFrame(() => {
-                    this.drag(point);
-                })();
-                break;
-            case PolygonStatus.SCALING:
-                makeRequestAnimationFrame(() => {
-                    this.scale(point);
-                })();
-                break;
-            case PolygonStatus.ACTIVE:
-                if (this.activeTarget) {
-                    this.activeTarget.emit("move", point);
-                }
-                break;
-            default:
-                break;
-        }
     }
 }
 

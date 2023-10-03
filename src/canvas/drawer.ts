@@ -1,5 +1,4 @@
 import { Polygon } from "./base";
-import { DragAndZoomRect } from "./dragAndZoom";
 import { DrawHelper } from "./helper";
 
 interface DrawerOptions {
@@ -43,6 +42,7 @@ export class Drawer {
         this._canvas.addEventListener("mousedown", this.onMoveDown.bind(this));
         this._canvas.addEventListener("mouseup", this.onMoveUp.bind(this));
         this._canvas.addEventListener("mousemove", this.onMove.bind(this));
+        this._canvas.addEventListener('mouseleave', this.onMoveUp.bind(this));
 
         const context = this._canvas.getContext
             ? this._canvas.getContext("2d")
@@ -60,6 +60,18 @@ export class Drawer {
 
     get options() {
         return this._options;
+    }
+
+    set target(target: Polygon<any> | null) {
+        this._target = target;
+    }
+
+    get height() {
+        return this._canvas.height;
+    }
+
+    get width() {
+        return this._canvas.width;
     }
 
     resize() {
@@ -174,7 +186,6 @@ export class Drawer {
         const point = DrawHelper.getMousePosition(this._canvas, event);
         for (let polygon of this._polygons) {
             if (
-                polygon instanceof DragAndZoomRect &&
                 polygon.scalable &&
                 polygon.isPointInPath(point)
             ) {
@@ -185,6 +196,7 @@ export class Drawer {
 
             if (polygon.isInPath(point)) {
                 polygon.emit("movedown", point);
+
                 this._target = polygon;
                 break;
             }
@@ -211,5 +223,7 @@ export class Drawer {
         if (!this._target) return;
         this._target.emit("moveup", point);
         this._target = null;
+
+        console.log(this._polygons)
     }
 }

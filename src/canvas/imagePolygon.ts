@@ -38,7 +38,8 @@ export class ImagePolygon extends DragAndZoomRect<ImageOptions> {
     }
 
     doDraw(): void {
-        super.doDraw();
+        // super.doDraw();
+        this.drawScale()
         if (this._loadStatus === ImageStatus.LOADED) {
             DrawHelper.drawImage(this.ctx, {
                 dx: this.leftX,

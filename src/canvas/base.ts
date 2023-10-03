@@ -2,10 +2,14 @@ import { v4 } from "uuid";
 import { EventEmitter } from "events";
 import { Drawer } from "./drawer";
 import { DrawHelper, Point } from "./helper";
+import { PolygonStatus } from "./dragAndScalablepolygon";
+import { makeRequestAnimationFrame } from "./utils";
 
 export interface BaseOptions {
     zIndex?: number;
     type?: string;
+    scalable?: boolean;
+    dragable?: boolean;
 }
 
 export abstract class Polygon<T extends BaseOptions> extends EventEmitter {
@@ -14,14 +18,17 @@ export abstract class Polygon<T extends BaseOptions> extends EventEmitter {
 
     private _parent: Polygon<any> | null = null;
     private _children: Polygon<any>[] = [];
-    
+
     private _options: T;
+
+    private _status: PolygonStatus = PolygonStatus.PENDING;
 
     private _attachSatatus: boolean = false;
 
     private _activeTarget: Polygon<any> | null = null;
 
     protected _ctx: CanvasRenderingContext2D | null = null;
+    private _prevPoint: Point | null = null;
 
     constructor(options: BaseOptions) {
         super();
@@ -81,7 +88,7 @@ export abstract class Polygon<T extends BaseOptions> extends EventEmitter {
 
     set children(polygon: Polygon<any>[]) {
         this._children = polygon.sort(
-            (a: Polygon<any>, b: Polygon<any>) => a.zIndex - b.zIndex
+            (a: Polygon<any>, b: Polygon<any>) => b.zIndex - a.zIndex
         );
     }
 
@@ -94,15 +101,33 @@ export abstract class Polygon<T extends BaseOptions> extends EventEmitter {
     }
 
     get scalable() {
-        return false;
+        return this.options.scalable ?? false;
     }
 
     get dragable() {
-        return false;
+        return this.options.dragable ?? false;
+    }
+
+    get status() {
+        return this._status;
+    }
+
+    get prevPoint(): Point {
+        if (!this._prevPoint) {
+            return {x: 0, y: 0}
+        }
+        return this._prevPoint;
+    }
+
+    set prevPoint(point: Point | null) {
+        this._prevPoint = point;
     }
 
     init() {
         this.doInit();
+        this.on("movedown", this.onMoveDown.bind(this));
+        this.on("moveup", this.onMoveUp.bind(this));
+        this.on("move", this.onMove.bind(this));
     }
 
     attach(drawer: Drawer) {
@@ -144,7 +169,8 @@ export abstract class Polygon<T extends BaseOptions> extends EventEmitter {
     draw() {
         this.doDraw();
         for (let i = this._children.length - 1; i >= 0; i--) {
-            this._children[i].draw()
+
+            this._children[i].draw();
         }
     }
 
@@ -152,7 +178,124 @@ export abstract class Polygon<T extends BaseOptions> extends EventEmitter {
         this.drawer.draw();
     }
 
+    dragStart(point: Point): void {
+        this._status = PolygonStatus.DRAGING;
+        this._prevPoint = point;
+    }
+    scaleStart(point: Point): void {
+        this._status = PolygonStatus.SCALING;
+        this._prevPoint = point;
+    }
+    drag(point: Point): void {
+        this.update(point);
+        this.drawer.draw();
+    }
+    scale(point: Point): void {
+        this.update(point);
+        this.drawer.draw();
+    }
+    dragEnd(point: Point): void {
+        this._status = PolygonStatus.PENDING;
+        this.update(point);
+        this.doDraw();
+        this._prevPoint = null;
+    }
+    scaleEnd(point: Point): void {
+        this._status = PolygonStatus.PENDING;
+        this.update(point);
+        this.doDraw();
+        this._prevPoint = null;
+    }
+
+    private onMoveDown(point: Point) {
+        // 判断是否点击在children 中
+
+        for (let polygon of this.children) {
+            console.log(polygon)
+            if (polygon.scalable && polygon.isPointInPath(point)) {
+                polygon.scaleStart(point);
+                this.activeTarget = polygon;
+                break;
+            }
+
+            if (polygon.dragable && polygon.isInPath(point)) {
+                polygon.emit("movedown", point);
+                this.activeTarget = polygon;
+                this._status = PolygonStatus.ACTIVE;
+                break;
+            }
+        }
+
+        // 将 activeTarget 移到children zIndex 最前面
+        if (this._status === PolygonStatus.ACTIVE && this.activeTarget) {
+            const index = this.children.indexOf(this.activeTarget);
+            if (index !== -1) {
+                this.children.splice(index, 1);
+            }
+            this.insertToZIndex(this.activeTarget);
+            return;
+        }
+
+        this.dragable && this.dragStart(point);
+    }
+
+    private onMoveUp(point: Point) {
+        switch (this._status) {
+            case PolygonStatus.DRAGING:
+                this.dragEnd(point);
+                break;
+            case PolygonStatus.SCALING:
+                this.scaleEnd(point);
+                break;
+            case PolygonStatus.ACTIVE:
+                if (this.activeTarget) {
+                    this.activeTarget.emit("moveup", point);
+                }
+                break;
+            default:
+                break;
+        }
+
+        this.activeTarget = null;
+    }
+
+    private onMove(point: Point) {
+        // if (!this.activeTarget) return;
+        switch (this._status) {
+            case PolygonStatus.DRAGING:
+                makeRequestAnimationFrame(() => {
+                    this.drag(point);
+                })();
+                break;
+            case PolygonStatus.SCALING:
+                makeRequestAnimationFrame(() => {
+                    this.scale(point);
+                })();
+                break;
+            case PolygonStatus.ACTIVE:
+                if (this.activeTarget) {
+                    this.activeTarget.emit("move", point);
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    private insertToZIndex<T extends BaseOptions>(polygon: Polygon<T>) {
+        let index = this.children.findIndex(
+            (item) => item.zIndex <= polygon.zIndex
+        );
+        if (index === -1) {
+            this.children.unshift(polygon);
+        } else {
+            this.children.splice(index, 0, polygon);
+        }
+    }
+
+    abstract isPointInPath(point: Point): boolean;
     abstract isInPath(point: Point): boolean;
+    protected abstract update(point: Point): void;
     protected abstract doDraw(): void;
     protected abstract doInit(): void;
 }
@@ -166,21 +309,24 @@ export interface RectBaseOptions extends BaseOptions {
     color?: string;
 }
 
-export class Rect<T extends RectBaseOptions> extends Polygon<T> {
-
+export abstract class Rect<T extends RectBaseOptions> extends Polygon<T> {
     constructor(options: RectBaseOptions) {
-        super(Object.assign(options, { type: "rect" }))
+        super(Object.assign(options, { type: "rect" }));
     }
 
     get x() {
         if (this.parent && this.parent instanceof Rect) {
-            return this.options.x  + this.parent.leftX ;
+            return this.options.x + this.parent.leftX;
         }
 
         return this.options.x;
     }
 
     set x(x: number) {
+        if (this.parent && this.parent instanceof Rect) {
+            this.options.x = x - this.parent.leftX;
+            return
+        }
         this.options.x = x;
     }
 
@@ -192,6 +338,10 @@ export class Rect<T extends RectBaseOptions> extends Polygon<T> {
     }
 
     set y(y: number) {
+        if (this.parent && this.parent instanceof Rect) {
+            this.options.y = y - this.parent.leftY;
+            return
+        }
         this.options.y = y;
     }
 
@@ -199,15 +349,6 @@ export class Rect<T extends RectBaseOptions> extends Polygon<T> {
      * 如果有parent, 则width和height是相对于parent的, 位置和大小不能超过parent的大小
      */
     get width() {
-        if (
-            this.parent &&
-            this.parent instanceof Rect &&
-            this.options.width + this.leftX > this.parent.width + this.parent.leftX
-        ) {
-            return this.parent.width - this.leftX;
-        }
-        // ...other
-
         return this.options.width;
     }
 
@@ -216,15 +357,6 @@ export class Rect<T extends RectBaseOptions> extends Polygon<T> {
     }
 
     get height() {
-        if (
-            this.parent &&
-            this.parent instanceof Rect &&
-            this.options.height + this.leftY > this.parent.height + this.parent.leftY
-        ) {
-            return this.parent.height - this.leftY;
-        }
-        // ...other
-
         return this.options.height;
     }
 
@@ -244,9 +376,7 @@ export class Rect<T extends RectBaseOptions> extends Polygon<T> {
         return this.doCheckInPath(point);
     }
 
-    protected doInit(): void {
-        // todo
-    }
+    abstract isPointInPath(point: Point): boolean;
 
     protected doCheckInPath(
         point: Point,
@@ -266,15 +396,7 @@ export class Rect<T extends RectBaseOptions> extends Polygon<T> {
         );
     }
 
-    protected doDraw() {
-        DrawHelper.drawRect(this.ctx, {
-            x: this.leftX,
-            y: this.leftY,
-            width: this.width,
-            height: this.height,
-            type: "fill",
-            color: "#f0f0f0",
-        });
-    }
-
+    protected abstract doDraw(): void;
+    protected abstract doInit(): void;
+    protected abstract update(point: Point): void;
 }
